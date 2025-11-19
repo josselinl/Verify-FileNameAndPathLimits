@@ -13,39 +13,44 @@
 $rootPath = "C:\tmp\"
 
 
-# Fonction pour calculer la longueur en caractères Unicode d'une chaîne
-function Get-CharLength($string) {
-    return $string.Length
+$limitName = 249
+$limitPath = 249
+
+Write-Host "Début du scan : $rootPath`n"
+
+# Scan
+try {
+    $files = Get-ChildItem -LiteralPath $rootPath -File -Recurse -ErrorAction SilentlyContinue
+} catch {
+    Write-Warning "Erreur d'accès à certains dossiers : $_"
+    $files = @()
 }
 
-# Récupère tous les fichiers dans le répertoire et ses sous-répertoires
-$files = Get-ChildItem -Path $rootPath -File -Recurse
-
-# Liste des fichiers dépassant la limite
 $result = @()
 
-Write-Host "Début du scan, cela peut prendre un certain temps..."
-
 foreach ($file in $files) {
-    $nameLength = Get-CharLength $file.Name
-    $pathLength = Get-CharLength $file.FullName
+    $path = $file.FullName
+    # Enlever le préfixe \\?\ si présent
+    if ($path.StartsWith("\\?\")) { $path = $path.Substring(4) }
 
-    if ($nameLength -gt 255 -or $pathLength -gt 260) {
+    $lenWin32 = [Win32PathHelper.PathWin32]::GetPathLengthWin32($path)
+    $nameLength = $file.Name.Length
+
+    if ($nameLength -gt $limitName -or $lenWin32 -ge $limitPath) {
         $result += [PSCustomObject]@{
-            FullName       = $file.FullName
-            NameLength     = $nameLength
-            PathLength     = $pathLength
+            FullName    = $path
+            NameLength  = $nameLength
+            PathLength  = $lenWin32
         }
     }
 }
 
 if ($result.Count -gt 0) {
-    Write-Host "Fichiers problématiques détectés :"
-    $result | Format-Table
+    Write-Host "`nFichiers dépassant les limites :" -ForegroundColor Yellow
+    $result | Sort-Object PathLength -Descending | Format-Table -Wrap -AutoSize
 } else {
-    Write-Host "Aucun fichier avec un nom > 255 caractères ou un chemin complet > 260 caractères trouvé."
+    Write-Host "`nAucun fichier ne dépasse les limites exFAT." -ForegroundColor Green
 }
 
-Write-Host "Scan terminé."
-
-Read-Host "Appuyez sur une touche pour fermer"
+Write-Host "`nScan terminé."
+Read-Host "Appuyez sur Entrée pour fermer"
