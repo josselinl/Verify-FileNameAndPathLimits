@@ -1,56 +1,76 @@
 <#
 .SYNOPSIS
-    Scanne un répertoire et ses sous-répertoires pour lister les fichiers dont le nom dépasse 255 caractères ou dont le chemin complet dépasse 260 caractères.
+    Scanne un répertoire et ses sous-répertoires pour lister les fichiers dont le nom ou chemin complet dépassent les limites strictes.
 
 .DESCRIPTION
-    Ce script parcourt récursivement tous les fichiers d'un répertoire spécifié,
-    mesurant la longueur en caractères Unicode du nom de fichier et du chemin complet.
-    Il affiche ensuite la liste des fichiers dépassant la limite stricte de 255 caractères pour le nom,
-    ou 260 caractères pour le chemin complet, qui correspondent aux limites les plus basses utilisées par exFAT et Windows classiques.
+    Ce script analyse la longueur en caractères Unicode et en octets UTF-8 du nom (brut) et du chemin complet (nettoyé),
+    et affiche les fichiers dépassant un des seuils suivants :
+    - nom > 255 caractères ou 255 octets,
+    - chemin complet > $limitPath caractères ou $limitPath octets.
 #>
 
-# Chemin du répertoire à scanner (à modifier selon besoin)
-$rootPath = "C:\tmp\"
+# Chemin racine à scanner
+$rootPath = "H:\"  # Modifiez ici
 
-
-$limitName = 249
+# Limite personnalisée pour le chemin complet (caractères et octets)
 $limitPath = 249
 
-Write-Host "Début du scan : $rootPath`n"
+# Nettoie la chaîne : supprime retours à la ligne et tabulations (pour chemins uniquement)
+function Clean-Name($string) {
+    return ($string -replace "\r|\n|\t", '').Trim()
+}
 
-# Scan
+# Longueur en caractères Unicode
+function Get-CharLength($string) {
+    return $string.Length
+}
+
+# Taille en octets UTF-8
+function Get-ByteLengthUtf8($string) {
+    return [System.Text.Encoding]::UTF8.GetByteCount($string)
+}
+
+$result = @()
+
+Write-Host "Début du scan. Cela peut prendre un certain temps..."
+
 try {
-    $files = Get-ChildItem -LiteralPath $rootPath -File -Recurse -ErrorAction SilentlyContinue
+    $files = Get-ChildItem -Path $rootPath -File -Recurse -ErrorAction SilentlyContinue
 } catch {
     Write-Warning "Erreur d'accès à certains dossiers : $_"
     $files = @()
 }
 
-$result = @()
-
 foreach ($file in $files) {
-    $path = $file.FullName
-    # Enlever le préfixe \\?\ si présent
-    if ($path.StartsWith("\\?\")) { $path = $path.Substring(4) }
+    # Ici on mesure le nom brut sans nettoyage
+    $nameRaw = $file.Name
+    # On nettoie uniquement le chemin complet
+    $cleanPath = Clean-Name $file.FullName
 
-    $lenWin32 = [Win32PathHelper.PathWin32]::GetPathLengthWin32($path)
-    $nameLength = $file.Name.Length
+    $nameCharLen = Get-CharLength $nameRaw
+    $pathCharLen = Get-CharLength $cleanPath
+    $nameByteLen = Get-ByteLengthUtf8 $nameRaw
+    $pathByteLen = Get-ByteLengthUtf8 $cleanPath
 
-    if ($nameLength -gt $limitName -or $lenWin32 -ge $limitPath) {
+    if ($nameCharLen -gt 255 -or $pathCharLen -gt $limitPath -or $nameByteLen -gt 255 -or $pathByteLen -gt $limitPath) {
         $result += [PSCustomObject]@{
-            FullName    = $path
-            NameLength  = $nameLength
-            PathLength  = $lenWin32
+            FullName        = $file.FullName
+            NameRaw         = $nameRaw
+            NameCharLength  = $nameCharLen
+            PathCharLength  = $pathCharLen
+            NameByteLength  = $nameByteLen
+            PathByteLength  = $pathByteLen
         }
     }
 }
 
 if ($result.Count -gt 0) {
-    Write-Host "`nFichiers dépassant les limites :" -ForegroundColor Yellow
-    $result | Sort-Object PathLength -Descending | Format-Table -Wrap -AutoSize
+    Write-Host "Fichiers dépassant les limites détectés :"
+    $result | Format-Table -Wrap -AutoSize
 } else {
-    Write-Host "`nAucun fichier ne dépasse les limites exFAT." -ForegroundColor Green
+    Write-Host "Aucun fichier ne dépasse les limites en caractères ou en octets."
 }
 
-Write-Host "`nScan terminé."
-Read-Host "Appuyez sur Entrée pour fermer"
+Write-Host "Scan terminé."
+
+Read-Host "Appuyez sur une touche pour fermer"
